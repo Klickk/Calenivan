@@ -1,66 +1,102 @@
-/* Minimal styling — mostly defer to the active GTK/ML4W theme.
-   Uses libadwaita named colors so it tracks the system accent. */
+/* Glassy dark theme, tuned to match the ML4W waybar: a translucent surface
+   over a Hyprland backdrop blur (see the `calendar-popup` layerrule), with
+   bright *inset* highlights for the refracted-light sheen, exactly like the
+   waybar modules' inset box-shadows. */
 
-/* Transparent so only the rounded glass box below is visible (the desktop
-   shows through the rounded corners). */
+/* Transparent toplevel so the rounded glass pane below is all that shows; the
+   blurred desktop shows through everywhere outside it. */
 .calendar-window {
     background-color: transparent;
 }
 
-/* The "liquid glass" rim. A 135deg gradient runs top-left -> bottom-right, so
-   it is bright at those two corners and a flat, dim colour along the
-   top-right / bottom-left middle. The padding is the border thickness. */
+/* The single glass pane. Translucent fill (the blur behind it does the
+   frosting), an inset white rim brightest at the top-left, a faint
+   bottom-right counter-highlight, and a soft drop shadow for depth. The margin
+   leaves room for that shadow to render inside the layer surface. */
 .glass-border {
-    padding: 1.5px;
-    border-radius: 16px;
-    background-image: linear-gradient(135deg,
-        rgba(255, 255, 255, 0.90) 0%,    /* bright  — top-left corner    */
-        rgba(255, 255, 255, 0.10) 30%,   /* flat    — top-right region   */
-        rgba(255, 255, 255, 0.10) 70%,   /* flat    — bottom-left region */
-        rgba(255, 255, 255, 0.90) 100%); /* bright  — bottom-right corner */
+    /* Frosted glass matching the waybar: a light, low-opacity surface over the
+       Hyprland backdrop blur (layerrule on `calendar-popup`) so the blurred
+       wallpaper shows through and reads *light*, like the waybar modules.
+       No margin and no outer shadow — with blur, any transparent margin
+       becomes a blurred halo (a visible rectangle). The small radius (matched
+       to Hyprland's decoration:rounding = 10) keeps the corners tight, since
+       this build can't round the layer's blur to hide them. */
+    margin: 0;
+    border-radius: 12px;
+    /* Opacity kept fairly high on purpose: the light text needs a dark surface,
+       and a low-opacity panel gets washed out over light/white backdrops (e.g.
+       Google Calendar in the browser) because the blur pulls that brightness
+       in. This tint stays readable over both the wallpaper and a white page,
+       while still translucent enough to read as frosted glass. */
+    background-color: rgba(28, 32, 42, 0.78);
+    box-shadow:
+        inset 2px 2px 2px  rgba(255, 255, 255, 0.38),   /* top-left sheen       */
+        inset 0 1px 1px    rgba(255, 255, 255, 0.30),
+        inset 0 0 0 1px    rgba(255, 255, 255, 0.16),    /* hairline glass edge  */
+        inset 0 -14px 26px rgba(0, 0, 0, 0.20);          /* inner depth (bottom) */
 }
 
-/* Inner fill. Slightly translucent so it reads as glass (add a Hyprland
-   `layerrule = blur, calendar-popup` for a real frosted effect). Radius is a
-   touch smaller than the rim so the gradient stays visible at the corners. */
+/* Inner padding only — kept transparent so the pane reads as one sheet. */
 .calendar-root {
-    border-radius: 14.5px;
-    background-color: rgba(44, 44, 46, 0.86);
-    padding: 14px;
+    border-radius: 12px;
+    background-color: transparent;
+    padding: 16px;
 }
 
-/* Day cells */
+/* --- Day cells --- */
 .day {
     border-radius: 100%;
     min-width: 50px;
     min-height: 50px;
     padding: 0;
+    transition: background-color 120ms ease, box-shadow 120ms ease;
+}
+
+.day:hover {
+    background-color: rgba(255, 255, 255, 0.10);
 }
 
 .day.other-month {
-    opacity: 0.35;
+    opacity: 0.32;
 }
 
 .day.today label {
     font-weight: bold;
 }
 
+/* Today: the accent red as a glassy pill — inset top sheen + a soft glow. */
 .day.today {
-    background-color: #ee3a43;
-    box-shadow: inset 0 0 0 1.5px #ee3a43;
+    background-color: rgba(238, 58, 67, 0.92);
+    box-shadow:
+        inset 1.5px 1.5px 1px rgba(255, 255, 255, 0.40),
+        inset -1px -1px 1px rgba(0, 0, 0, 0.20),
+        0 2px 8px rgba(238, 58, 67, 0.45);
 }
 
+/* Selected: a frosted white pill with its own inset highlight. */
 .day.selected {
-    background-color: #353b41;
+    background-color: rgba(255, 255, 255, 0.16);
     color: #ffffff;
+    box-shadow: inset 1.5px 1.5px 1px rgba(255, 255, 255, 0.30);
 }
 
 .day.selected label {
     font-weight: bold;
 }
 
-/* Colored dots under the day number (one per calendar with events that day).
-   The color is set per-dot via Pango markup, from each calendar's color. */
+/* Today *and* selected (e.g. the default state on open): keep today's red fill
+   and add a bright ring so the selection still reads. Higher specificity than
+   .selected alone, so it wins regardless of rule order. */
+.day.today.selected {
+    background-color: rgba(238, 58, 67, 0.92);
+    color: #ffffff;
+    box-shadow:
+        inset 1.5px 1.5px 1px rgba(255, 255, 255, 0.42),
+        0 0 0 2px rgba(255, 255, 255, 0.60),
+        0 2px 8px rgba(238, 58, 67, 0.50);
+}
+
+/* Colored dots under the day number (one per calendar with events that day). */
 .event-dot {
     font-size: 8px;
     padding: 0;
@@ -76,9 +112,40 @@
     opacity: 0.85;
 }
 
+/* Separator: a faint glass line rather than a hard rule. */
+separator {
+    background-color: rgba(255, 255, 255, 0.10);
+    min-height: 1px;
+}
+
+/* Event rows: each a subtle raised glass card so the list reads with depth. */
+.event-row {
+    border-radius: 10px;
+    padding: 3px 8px;
+    background-color: rgba(255, 255, 255, 0.05);
+    box-shadow: inset 1px 1px 1px rgba(255, 255, 255, 0.08);
+}
+
 /* Compact edit/delete buttons on each event row. */
 .row-btn {
     min-width: 26px;
     min-height: 26px;
     padding: 2px;
+}
+
+/* Add/edit box: a frosted glass pill matching the panel. */
+entry {
+    border-radius: 10px;
+    background-color: rgba(255, 255, 255, 0.06);
+    box-shadow: inset 1px 1px 1px rgba(255, 255, 255, 0.10);
+    color: #ffffff;
+}
+
+/* Flat buttons (header nav, Today, Week, add/cancel): quiet until hovered. */
+button.flat {
+    border-radius: 8px;
+}
+
+button.flat:hover {
+    background-color: rgba(255, 255, 255, 0.10);
 }

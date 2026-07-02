@@ -5,6 +5,7 @@ import Gtk from 'gi://Gtk?version=4.0';
 import Adw from 'gi://Adw?version=1';
 import Gdk from 'gi://Gdk?version=4.0';
 import GLib from 'gi://GLib';
+import Pango from 'gi://Pango';
 import LayerShell from 'gi://Gtk4LayerShell?version=1.0';
 import system from 'system';
 
@@ -33,11 +34,39 @@ function setupLayerShell(win) {
     LayerShell.init_for_window(win);
     LayerShell.set_namespace(win, 'calendar-popup');
     LayerShell.set_layer(win, LayerShell.Layer.TOP);
+    // Anchor to the top-right corner so the popup drops out of the waybar
+    // clock (which lives at the right end of the bar on this ML4W setup).
     LayerShell.set_anchor(win, LayerShell.Edge.TOP, true);
+    LayerShell.set_anchor(win, LayerShell.Edge.RIGHT, true);
     LayerShell.set_margin(win, LayerShell.Edge.TOP, -6);
+    LayerShell.set_margin(win, LayerShell.Edge.RIGHT, 8);
     // ON_DEMAND lets the popup take keyboard focus (for Escape) without
     // stealing it globally the way EXCLUSIVE would.
     LayerShell.set_keyboard_mode(win, LayerShell.KeyboardMode.ON_DEMAND);
+}
+
+// Parse an add/edit string into { summary, time }. A leading "HH:MM" (optionally
+// a range "HH:MM-HH:MM") makes it a timed event; otherwise time is null (all-day).
+// The colon is required, so titles that merely start with a number stay all-day.
+function parseEntry(text) {
+    const m = text.match(/^(\d{1,2}):(\d{2})(?:\s*-\s*(\d{1,2}):(\d{2}))?\s+(.+)$/);
+    if (!m) return { summary: text.trim(), time: null };
+    const sh = +m[1], sm = +m[2];
+    if (sh > 23 || sm > 59) return { summary: text.trim(), time: null };
+    let endMin = null;
+    if (m[3] != null) {
+        const eh = +m[3], em = +m[4];
+        if (eh <= 23 && em <= 59) endMin = eh * 60 + em;
+    }
+    return { summary: m[5].trim(), time: { startMin: sh * 60 + sm, endMin } };
+}
+
+// Inverse of parseEntry's time part: an editor prefix like "14:00 " or
+// "14:00-15:30 " so editing an existing timed event round-trips its time.
+function formatTimePrefix(time) {
+    if (!time) return '';
+    const f = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+    return time.endMin != null ? `${f(time.startMin)}-${f(time.endMin)} ` : `${f(time.startMin)} `;
 }
 
 // Pretty-print a YYYY-MM-DD key as e.g. "Thursday, 2 July 2026".
@@ -54,9 +83,9 @@ function buildContent(win) {
     });
     content.add_css_class('calendar-root');
 
-    // New events are written into the iCloud "Home" collection (vdirsyncer
-    // syncs this subdir up to iCloud). Reads still cover the whole tree.
-    const HOME_COLLECTION = '695D383C-90B7-46E6-A520-A80ADED6C5EC';
+    // New events are written into the primary Google calendar collection
+    // (vdirsyncer syncs this subdir up to Google). Reads still cover the whole tree.
+    const HOME_COLLECTION = 'ivanbakalov15@gmail.com';
     const store = new EventStore({
         writeDir: GLib.build_filenamev([GLib.get_user_data_dir(), 'calendar', HOME_COLLECTION]),
     });
@@ -83,6 +112,10 @@ function buildContent(win) {
     for (const cal of store.calendars()) {
         const item = new Gtk.Label();
         item.add_css_class('legend-item');
+        // Guard against pathological names (e.g. a Google "@virtual" calendar
+        // with no displayname) stretching the whole popup wide.
+        item.set_ellipsize(Pango.EllipsizeMode.END);
+        item.set_max_width_chars(24);
         item.set_markup(`<span foreground="${cal.color}">●</span> ${GLib.markup_escape_text(cal.name, -1)}`);
         legend.append(item);
     }
@@ -94,7 +127,7 @@ function buildContent(win) {
     const list = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 2 });
 
     // --- Add / edit row (the entry doubles as an inline editor) ---
-    const entry = new Gtk.Entry({ hexpand: true, placeholder_text: 'Add event…' });
+    const entry = new Gtk.Entry({ hexpand: true, placeholder_text: 'Add event…  (e.g. 14:00 Lunch)' });
     const cancelBtn = new Gtk.Button({ icon_name: 'window-close-symbolic', visible: false });
     cancelBtn.add_css_class('flat');
     const addBtn = new Gtk.Button({ icon_name: 'list-add-symbolic' });
@@ -108,17 +141,19 @@ function buildContent(win) {
     const endEdit = () => {
         editingPath = null;
         entry.set_text('');
-        entry.set_placeholder_text('Add event…');
+        entry.set_placeholder_text('Add event…  (e.g. 14:00 Lunch)');
         addBtn.set_icon_name('list-add-symbolic');
         cancelBtn.set_visible(false);
     };
     const startEdit = (ev) => {
         editingPath = ev.path;
-        entry.set_text(ev.summary);
-        entry.set_placeholder_text('Edit title…');
+        // Prefill the time (if any) so the whole "14:00 Title" round-trips.
+        entry.set_text(formatTimePrefix(store.timeOf(ev.path)) + ev.summary);
+        entry.set_placeholder_text('Edit…  (e.g. 14:00 Lunch)');
         addBtn.set_icon_name('object-select-symbolic');
         cancelBtn.set_visible(true);
         entry.grab_focus();
+        entry.set_position(-1); // cursor at end
     };
 
     // Replace a row's contents with an inline "Delete “…”? [Delete] [Cancel]".
@@ -149,7 +184,9 @@ function buildContent(win) {
         const row = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 4 });
         row.add_css_class('event-row');
         const lbl = new Gtk.Label({ halign: Gtk.Align.START, hexpand: true, xalign: 0, wrap: true });
-        const time = ev.allDay ? (ev.continuation ? '…  ' : '') : `${ev.timeLabel}  `;
+        const time = ev.allDay
+            ? (ev.continuation ? '…  ' : '')
+            : (ev.endLabel ? `${ev.timeLabel}–${ev.endLabel}  ` : `${ev.timeLabel}  `);
         lbl.set_markup(`<span foreground="${ev.color}">●</span>  ${GLib.markup_escape_text(time + ev.summary, -1)}`);
         const editB = new Gtk.Button({ icon_name: 'document-edit-symbolic' });
         editB.add_css_class('flat');
@@ -186,8 +223,10 @@ function buildContent(win) {
     const commit = () => {
         const text = entry.get_text().trim();
         if (!text) return;
-        if (editingPath) store.updateEventTitle(editingPath, text);
-        else store.addEvent(grid.selected, text);
+        const { summary, time } = parseEntry(text);
+        if (!summary) return;
+        if (editingPath) store.updateEvent(editingPath, summary, time);
+        else store.addEvent(grid.selected, summary, time);
         endEdit();
         grid.refresh();
         refresh(grid.selected);

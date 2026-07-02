@@ -196,6 +196,12 @@ export class EventStore {
         const allDay = startT.isDate;
         const first = new Date(startT.year, startT.month - 1, startT.day);
 
+        // For a single-day timed event, expose the end time so the row can show
+        // a range ("14:00–15:30"). Multi-day/all-day spans get no end label.
+        const sameDayTimedEnd = endT && !allDay &&
+            endT.year === startT.year && endT.month === startT.month && endT.day === startT.day;
+        const endLabel = sameDayTimedEnd ? `${pad(endT.hour)}:${pad(endT.minute)}` : '';
+
         let endExclusive;
         if (!endT) {
             endExclusive = new Date(first);
@@ -226,6 +232,7 @@ export class EventStore {
                 allDay: allDay || !isStart,
                 continuation: !isStart,
                 timeLabel: timed ? `${pad(startT.hour)}:${pad(startT.minute)}` : '',
+                endLabel: timed ? endLabel : '',
                 minutes: timed ? startT.hour * 60 + startT.minute : -1,
             });
             cur.setDate(cur.getDate() + 1);
@@ -270,8 +277,10 @@ export class EventStore {
         return best;
     }
 
-    // Create a new all-day event and persist it as a fresh *.ics, then reindex.
-    addEvent(ymd, summary) {
+    // Create a new event and persist it as a fresh *.ics, then reindex.
+    // `time` is null for an all-day event, or {startMin, endMin} (minutes from
+    // midnight, floating local wall-clock) for a timed one.
+    addEvent(ymd, summary, time = null) {
         this.ensureDir();
         const [y, m, d] = ymd.split('-').map(Number);
 
@@ -284,12 +293,7 @@ export class EventStore {
         const uid = GLib.uuid_string_random();
         ev.uid = uid;
         ev.summary = summary;
-
-        const start = ICAL.Time.fromData({ year: y, month: m, day: d, isDate: true });
-        ev.startDate = start;
-        const end = start.clone();
-        end.adjust(1, 0, 0, 0); // DTEND is exclusive for all-day events
-        ev.endDate = end;
+        this._applyWhen(ev, y, m, d, time);
         vevent.updatePropertyWithValue('dtstamp', ICAL.Time.now());
 
         cal.addSubcomponent(vevent);
@@ -299,6 +303,32 @@ export class EventStore {
 
         this.load();
         return path;
+    }
+
+    // Set an event's DTSTART/DTEND for date (y,m,d), either all-day (time null)
+    // or timed. Timed end defaults to start + 1h and is clamped within the day.
+    _applyWhen(ev, y, m, d, time) {
+        if (time && time.startMin != null) {
+            let endMin = time.endMin;
+            if (endMin == null || endMin <= time.startMin) endMin = time.startMin + 60;
+            if (endMin > 24 * 60) endMin = 24 * 60; // don't spill past midnight
+            ev.startDate = ICAL.Time.fromData({
+                year: y, month: m, day: d,
+                hour: Math.floor(time.startMin / 60), minute: time.startMin % 60,
+                second: 0, isDate: false,
+            });
+            ev.endDate = ICAL.Time.fromData({
+                year: y, month: m, day: d,
+                hour: Math.floor(endMin / 60), minute: endMin % 60,
+                second: 0, isDate: false,
+            });
+        } else {
+            const start = ICAL.Time.fromData({ year: y, month: m, day: d, isDate: true });
+            ev.startDate = start;
+            const end = start.clone();
+            end.adjust(1, 0, 0, 0); // DTEND is exclusive for all-day events
+            ev.endDate = end;
+        }
     }
 
     // Delete the .ics file backing an event (removes all its occurrences). The
@@ -312,16 +342,42 @@ export class EventStore {
         this.load();
     }
 
-    // Rewrite an event's SUMMARY in place (title-only edit for now).
-    updateEventTitle(path, newSummary) {
+    // Rewrite an event's SUMMARY and, optionally, its time. `time` is null to
+    // make it all-day, {startMin, endMin} to make it timed, or `undefined` to
+    // leave the existing DTSTART/DTEND untouched (title-only edit). The date is
+    // preserved from the existing DTSTART.
+    updateEvent(path, newSummary, time) {
         const [ok, bytes] = GLib.file_get_contents(path);
         if (!ok) return;
         const comp = new ICAL.Component(ICAL.parse(new TextDecoder().decode(bytes)));
         const vevents = comp.getAllSubcomponents('vevent');
         if (vevents.length === 0) return;
-        vevents[0].updatePropertyWithValue('summary', newSummary);
+        const ev = new ICAL.Event(vevents[0]);
+        ev.summary = newSummary;
+        if (time !== undefined && ev.startDate) {
+            const s = ev.startDate;
+            this._applyWhen(ev, s.year, s.month, s.day, time);
+        }
         vevents[0].updatePropertyWithValue('last-modified', ICAL.Time.now());
         GLib.file_set_contents(path, new TextEncoder().encode(comp.toString()));
         this.load();
+    }
+
+    // The event backing `path`'s time as {startMin, endMin} (timed) or null
+    // (all-day), so the editor can prefill it. Reads the first VEVENT.
+    timeOf(path) {
+        const [ok, bytes] = GLib.file_get_contents(path);
+        if (!ok) return null;
+        const comp = new ICAL.Component(ICAL.parse(new TextDecoder().decode(bytes)));
+        const vevents = comp.getAllSubcomponents('vevent');
+        if (vevents.length === 0) return null;
+        const ev = new ICAL.Event(vevents[0]);
+        if (!ev.startDate || ev.startDate.isDate) return null;
+        const s = ev.startDate;
+        const out = { startMin: s.hour * 60 + s.minute, endMin: null };
+        if (ev.endDate && !ev.endDate.isDate &&
+            ev.endDate.year === s.year && ev.endDate.month === s.month && ev.endDate.day === s.day)
+            out.endMin = ev.endDate.hour * 60 + ev.endDate.minute;
+        return out;
     }
 }
