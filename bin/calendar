@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Toggle the calendar popup: close it if already open, otherwise launch it.
+# Wire this to the waybar clock's on-click.
+set -euo pipefail
+
+APP_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+MAIN="$APP_DIR/src/main.js"
+
+# If a popup is already running, this toggles it off and exits.
+if pkill -f "gjs.*${MAIN}" 2>/dev/null; then
+    exit 0
+fi
+
+# Kick off a background sync (non-blocking) so the next open reflects iCloud.
+# The current open shows whatever is already on disk.
+if command -v vdirsyncer >/dev/null 2>&1 && [ -f "$HOME/.config/vdirsyncer/config" ]; then
+    (vdirsyncer sync >/dev/null 2>&1 &)
+fi
+
+# gtk4-layer-shell must load before libwayland-client. For an interpreted
+# runtime (gjs) that means LD_PRELOAD'ing the shim shipped by the package.
+PRELOAD=/usr/lib/libgtk4-layer-shell.so
+[ -e "$PRELOAD" ] || PRELOAD=/usr/lib/liblayer-shell-preload.so
+
+exec env LD_PRELOAD="${PRELOAD}${LD_PRELOAD:+:$LD_PRELOAD}" gjs -m "$MAIN"

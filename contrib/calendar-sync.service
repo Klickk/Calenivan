@@ -1,0 +1,9 @@
+[Unit]
+Description=Sync calendars with iCloud via vdirsyncer
+# Only run when the network is up.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/vdirsyncer sync

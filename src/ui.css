@@ -1,0 +1,84 @@
+/* Minimal styling — mostly defer to the active GTK/ML4W theme.
+   Uses libadwaita named colors so it tracks the system accent. */
+
+/* Transparent so only the rounded glass box below is visible (the desktop
+   shows through the rounded corners). */
+.calendar-window {
+    background-color: transparent;
+}
+
+/* The "liquid glass" rim. A 135deg gradient runs top-left -> bottom-right, so
+   it is bright at those two corners and a flat, dim colour along the
+   top-right / bottom-left middle. The padding is the border thickness. */
+.glass-border {
+    padding: 1.5px;
+    border-radius: 16px;
+    background-image: linear-gradient(135deg,
+        rgba(255, 255, 255, 0.90) 0%,    /* bright  — top-left corner    */
+        rgba(255, 255, 255, 0.10) 30%,   /* flat    — top-right region   */
+        rgba(255, 255, 255, 0.10) 70%,   /* flat    — bottom-left region */
+        rgba(255, 255, 255, 0.90) 100%); /* bright  — bottom-right corner */
+}
+
+/* Inner fill. Slightly translucent so it reads as glass (add a Hyprland
+   `layerrule = blur, calendar-popup` for a real frosted effect). Radius is a
+   touch smaller than the rim so the gradient stays visible at the corners. */
+.calendar-root {
+    border-radius: 14.5px;
+    background-color: rgba(44, 44, 46, 0.86);
+    padding: 14px;
+}
+
+/* Day cells */
+.day {
+    border-radius: 100%;
+    min-width: 50px;
+    min-height: 50px;
+    padding: 0;
+}
+
+.day.other-month {
+    opacity: 0.35;
+}
+
+.day.today label {
+    font-weight: bold;
+}
+
+.day.today {
+    background-color: #ee3a43;
+    box-shadow: inset 0 0 0 1.5px #ee3a43;
+}
+
+.day.selected {
+    background-color: #353b41;
+    color: #ffffff;
+}
+
+.day.selected label {
+    font-weight: bold;
+}
+
+/* Colored dots under the day number (one per calendar with events that day).
+   The color is set per-dot via Pango markup, from each calendar's color. */
+.event-dot {
+    font-size: 8px;
+    padding: 0;
+}
+
+/* Legend under the grid: calendar name in its color. */
+.legend {
+    margin-top: 2px;
+}
+
+.legend-item {
+    font-size: 11px;
+    opacity: 0.85;
+}
+
+/* Compact edit/delete buttons on each event row. */
+.row-btn {
+    min-width: 26px;
+    min-height: 26px;
+    padding: 2px;
+}
