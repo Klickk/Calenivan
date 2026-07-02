@@ -1,6 +1,7 @@
-// Month-view calendar grid: weekday header + 6x7 day cells, month navigation,
-// today/selected highlighting. Pure JS Date math (week starts Monday).
-// Emits `day-selected` (YYYY-MM-DD string) when a day is clicked.
+// Month/week calendar grid: weekday header + 6 week rows of 7 day cells, with
+// an ISO week number down the left of each row and a separating line above it.
+// Month navigation, today/selected highlighting. Pure JS Date math (Monday-first).
+// Emits `day-selected` (YYYY-MM-DD string) when a day is selected.
 
 import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk?version=4.0';
@@ -10,12 +11,25 @@ const MONTHS = [
     'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December',
 ];
+const WEEK_COL = 26; // width of the left-hand week-number column (px)
 
 // Local YYYY-MM-DD key (avoids UTC drift from Date.toISOString()).
 function ymd(d) {
     const m = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
     return `${d.getFullYear()}-${m}-${day}`;
+}
+
+// ISO 8601 week number (weeks start Monday; week 1 holds the year's first
+// Thursday). Computed in UTC to avoid DST edge cases.
+function isoWeek(date) {
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = (d.getUTCDay() + 6) % 7;      // Mon=0..Sun=6
+    d.setUTCDate(d.getUTCDate() - dayNum + 3);   // the Thursday of this week
+    const jan4 = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
+    const jan4Day = (jan4.getUTCDay() + 6) % 7;
+    jan4.setUTCDate(jan4.getUTCDate() - jan4Day + 3); // Thursday of week 1
+    return 1 + Math.round((d.getTime() - jan4.getTime()) / 604800000);
 }
 
 export const CalendarGrid = GObject.registerClass({
@@ -32,50 +46,7 @@ export const CalendarGrid = GObject.registerClass({
         this._mode = 'month';       // 'month' | 'week'
 
         this._buildHeader();
-        this._buildWeekdayRow();
-
-        // Rows are NOT homogeneous so that, in week mode, the 5 hidden rows
-        // collapse to zero height instead of reserving month-sized space.
-        // Cell min-height (ui.css) keeps month rows uniform.
-        this._grid = new Gtk.Grid({
-            column_homogeneous: true,
-            row_homogeneous: false,
-            column_spacing: 2,
-            row_spacing: 2,
-        });
-        this.append(this._grid);
-
-        this._cells = [];
-        for (let i = 0; i < 42; i++) {
-            const btn = new Gtk.Button();
-            btn.add_css_class('flat');
-            btn.add_css_class('day');
-
-            // Each cell stacks the day number over a row of colored dots — one
-            // per calendar that has events that day. The row has a fixed height
-            // so the number doesn't shift when dots appear/disappear.
-            const box = new Gtk.Box({
-                orientation: Gtk.Orientation.VERTICAL,
-                halign: Gtk.Align.CENTER,
-                valign: Gtk.Align.CENTER,
-            });
-            const num = new Gtk.Label();
-            const dots = new Gtk.Box({
-                orientation: Gtk.Orientation.HORIZONTAL,
-                spacing: 2,
-                halign: Gtk.Align.CENTER,
-            });
-            dots.set_size_request(-1, 8);
-            box.append(num);
-            box.append(dots);
-            btn.set_child(box);
-            btn._num = num;
-            btn._dots = dots;
-
-            btn.connect('clicked', () => this.selectDate(btn._ymd));
-            this._grid.attach(btn, i % 7, Math.floor(i / 7), 1, 1);
-            this._cells.push(btn);
-        }
+        this._buildBody();
 
         this._render();
     }
@@ -135,15 +106,75 @@ export const CalendarGrid = GObject.registerClass({
         this.append(header);
     }
 
-    _buildWeekdayRow() {
-        const row = new Gtk.Grid({ column_homogeneous: true, column_spacing: 2 });
-        WEEKDAYS.forEach((label, i) => {
-            const l = new Gtk.Label({ label });
+    // Weekday header + 6 week rows. Each row is [week number | 7 day cells],
+    // with a separating line above it (via the .week-row border in ui.css).
+    _buildBody() {
+        const body = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 0 });
+
+        // Weekday labels, with an empty spacer over the week-number column.
+        const head = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 2 });
+        const corner = new Gtk.Box();
+        corner.set_size_request(WEEK_COL, -1);
+        head.append(corner);
+        WEEKDAYS.forEach((label) => {
+            const l = new Gtk.Label({ label, hexpand: true });
             l.add_css_class('dim-label');
             l.add_css_class('caption');
-            row.attach(l, i, 0, 1, 1);
+            head.append(l);
         });
-        this.append(row);
+        body.append(head);
+
+        this._cells = [];
+        this._weekLabels = [];
+        this._weekRows = [];
+        for (let r = 0; r < 6; r++) {
+            const rowBox = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 2 });
+            rowBox.add_css_class('week-row');
+
+            const wk = new Gtk.Label({ valign: Gtk.Align.CENTER });
+            wk.set_size_request(WEEK_COL, -1);
+            wk.add_css_class('week-number');
+            rowBox.append(wk);
+            this._weekLabels.push(wk);
+
+            for (let c = 0; c < 7; c++) {
+                const cell = this._makeDayCell();
+                rowBox.append(cell);
+                this._cells.push(cell);
+            }
+            body.append(rowBox);
+            this._weekRows.push(rowBox);
+        }
+        this.append(body);
+    }
+
+    // One day cell: the number stacked over a fixed-height row of colored event
+    // dots (kept fixed so the number doesn't shift when dots appear/disappear).
+    _makeDayCell() {
+        const btn = new Gtk.Button({ hexpand: true });
+        btn.add_css_class('flat');
+        btn.add_css_class('day');
+
+        const box = new Gtk.Box({
+            orientation: Gtk.Orientation.VERTICAL,
+            halign: Gtk.Align.CENTER,
+            valign: Gtk.Align.CENTER,
+        });
+        const num = new Gtk.Label();
+        const dots = new Gtk.Box({
+            orientation: Gtk.Orientation.HORIZONTAL,
+            spacing: 2,
+            halign: Gtk.Align.CENTER,
+        });
+        dots.set_size_request(-1, 8);
+        box.append(num);
+        box.append(dots);
+        btn.set_child(box);
+        btn._num = num;
+        btn._dots = dots;
+
+        btn.connect('clicked', () => this.selectDate(btn._ymd));
+        return btn;
     }
 
     // 'month' | 'week'
@@ -219,7 +250,6 @@ export const CalendarGrid = GObject.registerClass({
     }
 
     _renderMonth() {
-        
         const year = this._view.getFullYear();
         const month = this._view.getMonth();
         this._title.set_label(MONTHS[month]);
@@ -232,8 +262,10 @@ export const CalendarGrid = GObject.registerClass({
         for (let i = 0; i < 42; i++) {
             const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
             this._paintCell(this._cells[i], d, month);
-            this._cells[i].set_visible(true);
+            if (i % 7 === 0)
+                this._weekLabels[i / 7].set_label(String(isoWeek(d)));
         }
+        for (let r = 0; r < 6; r++) this._weekRows[r].set_visible(true);
     }
 
     _renderWeek() {
@@ -249,9 +281,10 @@ export const CalendarGrid = GObject.registerClass({
         for (let i = 0; i < 7; i++) {
             const d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
             this._paintCell(this._cells[i], d, sel.getMonth());
-            this._cells[i].set_visible(true);
         }
-        for (let i = 7; i < 42; i++) this._cells[i].set_visible(false);
+        this._weekLabels[0].set_label(String(isoWeek(monday)));
+        this._weekRows[0].set_visible(true);
+        for (let r = 1; r < 6; r++) this._weekRows[r].set_visible(false);
     }
 
     _paintCell(cell, d, currentMonth) {

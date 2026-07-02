@@ -72,7 +72,7 @@
 }
 
 .legend-item {
-    font-size: 11px;
+    font-size: 12px;
     opacity: 0.85;
 }
 
@@ -81,4 +81,15 @@
     min-width: 26px;
     min-height: 26px;
     padding: 2px;
+}
+
+/* ISO week number down the left of each week row. */
+.week-number {
+    font-size: 12px;
+    opacity: 0.45;
+}
+
+/* Thin separating line above each week (like the iOS month view). */
+.week-row {
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
 }
