@@ -17,6 +17,26 @@ const APP_ID = 'com.jimmmmothy.calendar';
 // Directory this script lives in, so we can find sibling assets (ui.css).
 const SCRIPT_DIR = GLib.path_get_dirname(GLib.filename_from_uri(import.meta.url)[0]);
 
+// The popup is a fresh process each open, so the Month/Week view choice is
+// persisted to a tiny state file and restored on startup.
+const VIEW_MODE_FILE = GLib.build_filenamev([GLib.get_user_state_dir(), 'calenivan', 'view-mode']);
+
+function loadViewMode() {
+    try {
+        const [ok, bytes] = GLib.file_get_contents(VIEW_MODE_FILE);
+        if (ok) {
+            const m = new TextDecoder().decode(bytes).trim();
+            if (m === 'week' || m === 'month') return m;
+        }
+    } catch (_e) { /* no saved mode — fall through to default */ }
+    return 'month';
+}
+
+function saveViewMode(mode) {
+    GLib.mkdir_with_parents(GLib.path_get_dirname(VIEW_MODE_FILE), 0o755);
+    GLib.file_set_contents(VIEW_MODE_FILE, new TextEncoder().encode(mode));
+}
+
 function loadStyles() {
     const cssPath = GLib.build_filenamev([SCRIPT_DIR, 'ui.css']);
     if (!GLib.file_test(cssPath, GLib.FileTest.EXISTS))
@@ -94,13 +114,13 @@ function buildContent(win) {
     const grid = new CalendarGrid();
     grid.setDayColors((ymd) => store.colorsOn(ymd));
 
-    // --- View toggle (Month / Week), right-aligned above the grid ---
-    const weekToggle = new Gtk.ToggleButton({ label: 'Week' });
-    weekToggle.add_css_class('flat');
-    weekToggle.connect('toggled', () => grid.setMode(weekToggle.active ? 'week' : 'month'));
-    const toolbar = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL });
-    toolbar.append(new Gtk.Box({ hexpand: true })); // spacer pushes the toggle right
-    toolbar.append(weekToggle);
+    // --- View mode (Month / Week) ---
+    // No visible toggle: Tab switches the view (see the keyboard shortcuts).
+    const setViewMode = (mode) => {
+        grid.setMode(mode);
+        saveViewMode(mode); // remember the choice for the next open
+    };
+    setViewMode(loadViewMode()); // restore the last-used view
 
     // --- Legend: each calendar's name in its color ---
     const legend = new Gtk.Box({
@@ -125,6 +145,15 @@ function buildContent(win) {
     dateLabel.add_css_class('title-5');
 
     const list = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 2 });
+    // Scrollable viewport so a day with many events doesn't grow the popup
+    // unboundedly; keyboard navigation scrolls the highlighted row into view.
+    const scroller = new Gtk.ScrolledWindow({
+        hscrollbar_policy: Gtk.PolicyType.NEVER,
+        vscrollbar_policy: Gtk.PolicyType.AUTOMATIC,
+        propagate_natural_height: true,
+        max_content_height: 200,
+    });
+    scroller.set_child(list);
 
     // --- Add / edit row (the entry doubles as an inline editor) ---
     const entry = new Gtk.Entry({ hexpand: true, placeholder_text: 'Add event…  (e.g. 14:00 Lunch)' });
@@ -138,6 +167,11 @@ function buildContent(win) {
     addRow.append(addBtn);
 
     let editingPath = null;
+    // Keyboard navigation state for the day's event list.
+    let dayEvents = [];       // events shown for the selected day
+    let eventRows = [];       // row widgets, parallel to dayEvents
+    let focusedIndex = -1;    // highlighted event, -1 = none
+    let pendingDelete = null; // { ev } while an inline delete-confirm is showing
     const endEdit = () => {
         editingPath = null;
         entry.set_text('');
@@ -156,8 +190,18 @@ function buildContent(win) {
         entry.set_position(-1); // cursor at end
     };
 
+    // Delete an event and repaint (shared by the trash button and the keyboard).
+    const doDelete = (ev) => {
+        store.deleteEvent(ev.path);
+        if (editingPath === ev.path) endEdit();
+        grid.refresh();
+        refresh(grid.selected);
+    };
+
     // Replace a row's contents with an inline "Delete “…”? [Delete] [Cancel]".
+    // Sets pendingDelete so the keyboard can confirm (Enter) or cancel it too.
     const confirmDelete = (row, ev) => {
+        pendingDelete = { ev };
         let c = row.get_first_child();
         while (c) { const n = c.get_next_sibling(); row.remove(c); c = n; }
         const q = new Gtk.Label({ label: `Delete “${ev.summary}”?`, halign: Gtk.Align.START, hexpand: true, xalign: 0, wrap: true });
@@ -168,12 +212,7 @@ function buildContent(win) {
         const no = new Gtk.Button({ label: 'Cancel' });
         no.add_css_class('flat');
         no.add_css_class('row-btn');
-        yes.connect('clicked', () => {
-            store.deleteEvent(ev.path);
-            if (editingPath === ev.path) endEdit();
-            grid.refresh();
-            refresh(grid.selected);
-        });
+        yes.connect('clicked', () => doDelete(ev));
         no.connect('clicked', () => refresh(grid.selected));
         row.append(q);
         row.append(yes);
@@ -202,6 +241,35 @@ function buildContent(win) {
         return row;
     };
 
+    // Scroll the given row fully into the viewport (for keyboard navigation).
+    const scrollRowIntoView = (row) => {
+        const vadj = scroller.get_vadjustment();
+        const [ok, , y] = row.translate_coordinates(list, 0, 0);
+        if (!ok) return;
+        const h = row.get_allocated_height();
+        if (y < vadj.value) vadj.value = y;
+        else if (y + h > vadj.value + vadj.page_size) vadj.value = y + h - vadj.page_size;
+    };
+
+    // Paint the `.active` highlight on the focused row and scroll it into view.
+    const highlightFocused = () => {
+        eventRows.forEach((r, i) => {
+            if (i === focusedIndex) r.add_css_class('active');
+            else r.remove_css_class('active');
+        });
+        if (focusedIndex >= 0 && eventRows[focusedIndex]) scrollRowIntoView(eventRows[focusedIndex]);
+    };
+
+    // Move the highlight through the day's events (wraps; first press from none
+    // lands on the first/last depending on direction).
+    const moveFocus = (delta) => {
+        if (dayEvents.length === 0) return;
+        focusedIndex = focusedIndex === -1
+            ? (delta > 0 ? 0 : dayEvents.length - 1)
+            : (focusedIndex + delta + dayEvents.length) % dayEvents.length;
+        highlightFocused();
+    };
+
     const refresh = (key) => {
         dateLabel.set_label(prettyDate(key));
         let child = list.get_first_child();
@@ -210,14 +278,21 @@ function buildContent(win) {
             list.remove(child);
             child = next;
         }
-        const events = store.eventsOn(key);
-        if (events.length === 0) {
+        pendingDelete = null;
+        focusedIndex = -1;
+        dayEvents = store.eventsOn(key);
+        eventRows = [];
+        if (dayEvents.length === 0) {
             const empty = new Gtk.Label({ label: 'No events', halign: Gtk.Align.START });
             empty.add_css_class('dim-label');
             list.append(empty);
             return;
         }
-        for (const ev of events) list.append(buildEventRow(ev));
+        for (const ev of dayEvents) {
+            const row = buildEventRow(ev);
+            eventRows.push(row);
+            list.append(row);
+        }
     };
 
     const commit = () => {
@@ -252,18 +327,47 @@ function buildContent(win) {
         const typing = focusInEntry();
         const ctrl = (state & Gdk.ModifierType.CONTROL_MASK) !== 0;
         const shift = (state & Gdk.ModifierType.SHIFT_MASK) !== 0;
+        const isEnter = keyval === Gdk.KEY_Return || keyval === Gdk.KEY_KP_Enter;
 
-        // Tab toggles week view (button stays in sync via its 'toggled' signal).
-        if (keyval === Gdk.KEY_Tab && !typing) {
-            weekToggle.set_active(!weekToggle.active);
+        // Escape while typing leaves the add/edit box (cancelling any in-progress
+        // edit) and hands focus back to the calendar, instead of closing the
+        // popup. A second Escape — now not typing — closes it via the window's
+        // own handler. Consuming the event here (return true) stops that.
+        if (keyval === Gdk.KEY_Escape && typing) {
+            endEdit();
+            win.set_focus(null);
             return true;
         }
-        // Enter focuses the add-event box when you're not already in it.
-        if ((keyval === Gdk.KEY_Return || keyval === Gdk.KEY_KP_Enter) && !typing) {
-            entry.grab_focus();
+
+        // While an inline delete-confirm is open: Enter confirms, anything
+        // else cancels it. Takes priority over every other shortcut.
+        if (pendingDelete && !typing) {
+            if (isEnter) doDelete(pendingDelete.ev);
+            else refresh(grid.selected); // cancel
+            return true;
+        }
+
+        // Tab switches between Month and Week view.
+        if (keyval === Gdk.KEY_Tab && !typing) {
+            setViewMode(grid.mode === 'week' ? 'month' : 'week');
+            return true;
+        }
+        // Enter edits the highlighted event, or focuses the add box if none.
+        if (isEnter && !typing) {
+            if (focusedIndex >= 0) startEdit(dayEvents[focusedIndex]);
+            else entry.grab_focus();
             return true;
         }
         if (typing) return false; // let the entry keep every other key
+
+        // Up/Down scroll the highlight through the day's events.
+        if (keyval === Gdk.KEY_Down) { moveFocus(1); return true; }
+        if (keyval === Gdk.KEY_Up) { moveFocus(-1); return true; }
+        // Delete removes the highlighted event (via the inline confirm).
+        if (keyval === Gdk.KEY_Delete && focusedIndex >= 0) {
+            confirmDelete(eventRows[focusedIndex], dayEvents[focusedIndex]);
+            return true;
+        }
 
         const ch = String.fromCharCode(Gdk.keyval_to_unicode(keyval)).toLowerCase();
         switch (ch) {
@@ -291,6 +395,18 @@ function buildContent(win) {
                 if (next) grid.selectDate(next);
                 return true;
             }
+            case 'j': // down / up through the day's events (vim-style)
+                moveFocus(1);
+                return true;
+            case 'k':
+                moveFocus(-1);
+                return true;
+            case 'e': // edit the highlighted event
+                if (focusedIndex >= 0) startEdit(dayEvents[focusedIndex]);
+                return true;
+            case 'x': // delete the highlighted event (with confirm)
+                if (focusedIndex >= 0) confirmDelete(eventRows[focusedIndex], dayEvents[focusedIndex]);
+                return true;
         }
         return false;
     });
@@ -299,13 +415,12 @@ function buildContent(win) {
     grid.connect('day-selected', (_g, key) => refresh(key));
     refresh(grid.selected);
 
-    content.append(toolbar);
     content.append(grid);
     if (store.calendars().length > 0)
         content.append(legend);
     content.append(new Gtk.Separator({ orientation: Gtk.Orientation.HORIZONTAL }));
     content.append(dateLabel);
-    content.append(list);
+    content.append(scroller);
     content.append(addRow);
 
     // Outer box paints the "liquid glass" gradient rim; the inner content box

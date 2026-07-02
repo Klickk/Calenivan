@@ -14,31 +14,34 @@
    bottom-right counter-highlight, and a soft drop shadow for depth. The margin
    leaves room for that shadow to render inside the layer surface. */
 .glass-border {
-    /* Frosted glass matching the waybar: a light, low-opacity surface over the
-       Hyprland backdrop blur (layerrule on `calendar-popup`) so the blurred
-       wallpaper shows through and reads *light*, like the waybar modules.
-       No margin and no outer shadow — with blur, any transparent margin
-       becomes a blurred halo (a visible rectangle). The small radius (matched
-       to Hyprland's decoration:rounding = 10) keeps the corners tight, since
-       this build can't round the layer's blur to hide them. */
+    /* Frosted dark panel WITHOUT a Hyprland backdrop-blur layerrule. This build
+       can't round a layer's blur, so blur always leaves squared corners on a
+       rounded panel; turning it off gives perfectly clean rounded corners.
+       The surface is a semi-opaque slate (not near-black, so it doesn't read as
+       heavy) — opaque enough to stay readable over both the wallpaper and a
+       white page. With no blur, a transparent margin no longer creates a halo,
+       so the outer drop shadow is back for depth. */
+    /* No margin and no *outer* drop shadow: without blur, the outer shadow fills
+       the layer surface's rectangle around the rounded panel and reads as a hard
+       box over darker backdrops. Keeping the surface flush with the panel (no
+       margin) removes that rectangle entirely. Depth comes from inset shadows. */
     margin: 0;
-    border-radius: 12px;
-    /* Opacity kept fairly high on purpose: the light text needs a dark surface,
-       and a low-opacity panel gets washed out over light/white backdrops (e.g.
-       Google Calendar in the browser) because the blur pulls that brightness
-       in. This tint stays readable over both the wallpaper and a white page,
-       while still translucent enough to read as frosted glass. */
-    background-color: rgba(28, 32, 42, 0.78);
+    border-radius: 16px;
+    /* Near-opaque: with no backdrop blur, a translucent panel lets busy/bright
+       content behind it (e.g. the Google Calendar page) ghost through. Keeping
+       it ~opaque avoids that while the inset highlights give a glassy look.
+       A slate tint (not near-black) keeps it from reading heavy. */
+    background-color: rgba(36, 40, 51, 0.97);
     box-shadow:
         inset 2px 2px 2px  rgba(255, 255, 255, 0.38),   /* top-left sheen       */
         inset 0 1px 1px    rgba(255, 255, 255, 0.30),
-        inset 0 0 0 1px    rgba(255, 255, 255, 0.16),    /* hairline glass edge  */
-        inset 0 -14px 26px rgba(0, 0, 0, 0.20);          /* inner depth (bottom) */
+        inset 0 0 0 1px    rgba(255, 255, 255, 0.14),    /* hairline glass edge  */
+        inset 0 -16px 28px rgba(0, 0, 0, 0.22);          /* inner depth (bottom) */
 }
 
 /* Inner padding only — kept transparent so the pane reads as one sheet. */
 .calendar-root {
-    border-radius: 12px;
+    border-radius: 16px;
     background-color: transparent;
     padding: 16px;
 }
@@ -124,6 +127,18 @@ separator {
     padding: 3px 8px;
     background-color: rgba(255, 255, 255, 0.05);
     box-shadow: inset 1px 1px 1px rgba(255, 255, 255, 0.08);
+}
+
+/* Keyboard-highlighted event (Up/Down or j/k). */
+.event-row.active {
+    background-color: rgba(255, 255, 255, 0.16);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.26);
+}
+
+/* The event list's scroll viewport is transparent so the glass shows through. */
+scrolledwindow,
+scrolledwindow > viewport {
+    background-color: transparent;
 }
 
 /* Compact edit/delete buttons on each event row. */
