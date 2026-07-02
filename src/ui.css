@@ -108,7 +108,7 @@
 }
 
 .legend-item {
-    font-size: 11px;
+    font-size: 12px;
     opacity: 0.85;
 }
 
@@ -148,4 +148,16 @@ button.flat {
 
 button.flat:hover {
     background-color: rgba(255, 255, 255, 0.10);
+}
+
+/* ISO week number down the left of each week row (from upstream). Kept subtle
+   so it doesn't fight the frosted panel. */
+.week-number {
+    font-size: 12px;
+    opacity: 0.45;
+}
+
+/* Thin separating line above each week (like the iOS month view). */
+.week-row {
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
 }

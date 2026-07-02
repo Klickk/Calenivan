@@ -22,4 +22,6 @@ fi
 PRELOAD=/usr/lib/libgtk4-layer-shell.so
 [ -e "$PRELOAD" ] || PRELOAD=/usr/lib/liblayer-shell-preload.so
 
-exec env LD_PRELOAD="${PRELOAD}${LD_PRELOAD:+:$LD_PRELOAD}" gjs -m "$MAIN"
+# Use GTK's cairo (software) renderer instead of the default GL/Vulkan one.
+exec env GSK_RENDERER=cairo \
+    LD_PRELOAD="${PRELOAD}${LD_PRELOAD:+:$LD_PRELOAD}" gjs -m "$MAIN"
