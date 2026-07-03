@@ -4,6 +4,7 @@
 // Emits `day-selected` (YYYY-MM-DD string) when a day is selected.
 
 import GObject from 'gi://GObject';
+import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk?version=4.0';
 
 const WEEKDAYS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su']; // Monday-first
@@ -180,8 +181,48 @@ export const CalendarGrid = GObject.registerClass({
     // 'month' | 'week'
     setMode(mode) {
         if (mode !== 'week' && mode !== 'month') return;
+        if (mode === this._mode) { this._render(); return; }
+
+        // Height the grid currently occupies on screen (the mode we're leaving).
+        const from = this.get_allocated_height();
+
         this._mode = mode;
         this._render();
+
+        // Natural height of the mode we're switching to. Fall back to skipping
+        // the animation if we can't measure yet (e.g. before the first allocate).
+        const [, to] = this.measure(Gtk.Orientation.VERTICAL, -1);
+        if (from > 0 && to > 0 && from !== to) this._animateHeight(from, to);
+    }
+
+    // Interpolate the grid's height request from `from` to `to` so the window
+    // grows/shrinks smoothly under the same easing in both directions — rather
+    // than the compositor animating only the grow and snapping the shrink.
+    _animateHeight(from, to) {
+        const DURATION = 180000; // microseconds (~180ms)
+
+        if (this._heightAnim) {
+            this.remove_tick_callback(this._heightAnim);
+            this._heightAnim = 0;
+        }
+
+        let t0 = 0;
+        this.set_size_request(-1, from);
+        this._heightAnim = this.add_tick_callback((widget, clock) => {
+            const now = clock.get_frame_time();
+            if (!t0) t0 = now;
+
+            const p = Math.min((now - t0) / DURATION, 1);
+            const eased = 1 - Math.pow(1 - p, 3); // easeOutCubic
+            widget.set_size_request(-1, Math.round(from + (to - from) * eased));
+
+            if (p >= 1) {
+                widget.set_size_request(-1, -1); // release back to natural size
+                this._heightAnim = 0;
+                return GLib.SOURCE_REMOVE;
+            }
+            return GLib.SOURCE_CONTINUE;
+        });
     }
 
     // The ‹ › next to the month name: month mode steps a month, week mode a week.
