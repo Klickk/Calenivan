@@ -4,6 +4,7 @@
 import Gtk from 'gi://Gtk?version=4.0';
 import Adw from 'gi://Adw?version=1';
 import Gdk from 'gi://Gdk?version=4.0';
+import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Pango from 'gi://Pango';
 import LayerShell from 'gi://Gtk4LayerShell?version=1.0';
@@ -37,17 +38,61 @@ function saveViewMode(mode) {
     GLib.file_set_contents(VIEW_MODE_FILE, new TextEncoder().encode(mode));
 }
 
-function loadStyles() {
-    const cssPath = GLib.build_filenamev([SCRIPT_DIR, 'ui.css']);
-    if (!GLib.file_test(cssPath, GLib.FileTest.EXISTS))
+// ui.css references the matugen-generated palette in colors.css (regenerated
+// on every wallpaper change). GTK resolves @define-color names per provider,
+// so the two files must be parsed together as one sheet. If matugen hasn't
+// run yet, this fallback supplies the names ui.css needs (the old static
+// slate-and-red theme).
+const FALLBACK_COLORS = `
+@define-color primary #ee3a43;
+@define-color on_primary #ffffff;
+@define-color on_surface #ffffff;
+@define-color surface_container rgb(36, 40, 51);
+@define-color surface_container_high rgb(46, 50, 62);
+@define-color error #ee3a43;
+`;
+
+let styleProvider = null;
+let colorsMonitor = null;
+
+function readTextFile(path) {
+    try {
+        const [ok, bytes] = GLib.file_get_contents(path);
+        return ok ? new TextDecoder().decode(bytes) : null;
+    } catch (_e) {
+        return null;
+    }
+}
+
+function applyStyles() {
+    const ui = readTextFile(GLib.build_filenamev([SCRIPT_DIR, 'ui.css']));
+    if (ui === null)
         return;
+    const colors = readTextFile(GLib.build_filenamev([SCRIPT_DIR, 'colors.css'])) ?? FALLBACK_COLORS;
     const provider = new Gtk.CssProvider();
-    provider.load_from_path(cssPath);
+    provider.load_from_string(colors + ui);
+    const display = Gdk.Display.get_default();
+    if (styleProvider)
+        Gtk.StyleContext.remove_provider_for_display(display, styleProvider);
     Gtk.StyleContext.add_provider_for_display(
-        Gdk.Display.get_default(),
+        display,
         provider,
         Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
+    styleProvider = provider;
+}
+
+function loadStyles() {
+    applyStyles();
+    // Restyle live when matugen rewrites the palette (wallpaper change).
+    const colorsFile = Gio.File.new_for_path(GLib.build_filenamev([SCRIPT_DIR, 'colors.css']));
+    colorsMonitor = colorsFile.monitor_file(Gio.FileMonitorFlags.NONE, null);
+    colorsMonitor.connect('changed', (_monitor, _file, _other, event) => {
+        if (event === Gio.FileMonitorEvent.CHANGES_DONE_HINT ||
+            event === Gio.FileMonitorEvent.CREATED ||
+            event === Gio.FileMonitorEvent.RENAMED)
+            applyStyles();
+    });
 }
 
 function setupLayerShell(win) {

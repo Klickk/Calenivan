@@ -1,7 +1,13 @@
 /* Glassy dark theme, tuned to match the ML4W waybar: a translucent surface
    over a Hyprland backdrop blur (see the `calendar-popup` layerrule), with
    bright *inset* highlights for the refracted-light sheen, exactly like the
-   waybar modules' inset box-shadows. */
+   waybar modules' inset box-shadows.
+
+   Colors come from the matugen-generated Material palette (colors.css, written
+   next to this file on every wallpaper change): @surface_container for the
+   pane, @primary/@on_primary for the accent, @on_surface for text and the
+   frosted fills. main.js concatenates the two files into one provider (GTK
+   resolves @define-color names per provider) and reloads on regeneration. */
 
 /* Transparent toplevel so the rounded glass pane below is all that shows; the
    blurred desktop shows through everywhere outside it. */
@@ -9,29 +15,17 @@
     background-color: transparent;
 }
 
-/* The single glass pane. Translucent fill (the blur behind it does the
-   frosting), an inset white rim brightest at the top-left, a faint
-   bottom-right counter-highlight, and a soft drop shadow for depth. The margin
-   leaves room for that shadow to render inside the layer surface. */
+/* The single glass pane. Translucent fill, an inset white rim brightest at the
+   top-left, a faint hairline edge, and inner bottom depth. No margin and no
+   *outer* drop shadow: without a backdrop-blur layerrule (this build can't
+   round a layer's blur), an outer shadow fills the layer surface's rectangle
+   around the rounded panel and reads as a hard box over darker backdrops. */
 .glass-border {
-    /* Frosted dark panel WITHOUT a Hyprland backdrop-blur layerrule. This build
-       can't round a layer's blur, so blur always leaves squared corners on a
-       rounded panel; turning it off gives perfectly clean rounded corners.
-       The surface is a semi-opaque slate (not near-black, so it doesn't read as
-       heavy) — opaque enough to stay readable over both the wallpaper and a
-       white page. With no blur, a transparent margin no longer creates a halo,
-       so the outer drop shadow is back for depth. */
-    /* No margin and no *outer* drop shadow: without blur, the outer shadow fills
-       the layer surface's rectangle around the rounded panel and reads as a hard
-       box over darker backdrops. Keeping the surface flush with the panel (no
-       margin) removes that rectangle entirely. Depth comes from inset shadows. */
     margin: 0;
     border-radius: 16px;
-    /* Near-opaque: with no backdrop blur, a translucent panel lets busy/bright
-       content behind it (e.g. the Google Calendar page) ghost through. Keeping
-       it ~opaque avoids that while the inset highlights give a glassy look.
-       A slate tint (not near-black) keeps it from reading heavy. */
-    background-color: rgba(36, 40, 51, 0.97);
+    /* Semi-transparent so the wallpaper tints the pane; the matugen surface
+       already harmonizes with it, so ghosting reads as intentional glass. */
+    background-color: alpha(@surface_container, 0.85);
     box-shadow:
         inset 2px 2px 2px  rgba(255, 255, 255, 0.38),   /* top-left sheen       */
         inset 0 1px 1px    rgba(255, 255, 255, 0.30),
@@ -44,6 +38,7 @@
     border-radius: 16px;
     background-color: transparent;
     padding: 16px;
+    color: @on_surface;
 }
 
 /* --- Day cells --- */
@@ -56,7 +51,7 @@
 }
 
 .day:hover {
-    background-color: rgba(255, 255, 255, 0.10);
+    background-color: alpha(@on_surface, 0.10);
 }
 
 .day.other-month {
@@ -67,19 +62,20 @@
     font-weight: bold;
 }
 
-/* Today: the accent red as a glassy pill — inset top sheen + a soft glow. */
+/* Today: the wallpaper accent as a glassy pill — inset top sheen + a soft glow. */
 .day.today {
-    background-color: rgba(238, 58, 67, 0.92);
+    background-color: alpha(@primary, 0.92);
+    color: @on_primary;
     box-shadow:
         inset 1.5px 1.5px 1px rgba(255, 255, 255, 0.40),
         inset -1px -1px 1px rgba(0, 0, 0, 0.20),
-        0 2px 8px rgba(238, 58, 67, 0.45);
+        0 2px 8px alpha(@primary, 0.45);
 }
 
-/* Selected: a frosted white pill with its own inset highlight. */
+/* Selected: a frosted pill with its own inset highlight. */
 .day.selected {
-    background-color: rgba(255, 255, 255, 0.16);
-    color: #ffffff;
+    background-color: alpha(@on_surface, 0.16);
+    color: @on_surface;
     box-shadow: inset 1.5px 1.5px 1px rgba(255, 255, 255, 0.30);
 }
 
@@ -87,16 +83,16 @@
     font-weight: bold;
 }
 
-/* Today *and* selected (e.g. the default state on open): keep today's red fill
-   and add a bright ring so the selection still reads. Higher specificity than
-   .selected alone, so it wins regardless of rule order. */
+/* Today *and* selected (e.g. the default state on open): keep today's accent
+   fill and add a bright ring so the selection still reads. Higher specificity
+   than .selected alone, so it wins regardless of rule order. */
 .day.today.selected {
-    background-color: rgba(238, 58, 67, 0.92);
-    color: #ffffff;
+    background-color: alpha(@primary, 0.92);
+    color: @on_primary;
     box-shadow:
         inset 1.5px 1.5px 1px rgba(255, 255, 255, 0.42),
-        0 0 0 2px rgba(255, 255, 255, 0.60),
-        0 2px 8px rgba(238, 58, 67, 0.50);
+        0 0 0 2px alpha(@on_surface, 0.60),
+        0 2px 8px alpha(@primary, 0.50);
 }
 
 /* Colored dots under the day number (one per calendar with events that day). */
@@ -117,7 +113,7 @@
 
 /* Separator: a faint glass line rather than a hard rule. */
 separator {
-    background-color: rgba(255, 255, 255, 0.10);
+    background-color: alpha(@on_surface, 0.10);
     min-height: 1px;
 }
 
@@ -125,14 +121,14 @@ separator {
 .event-row {
     border-radius: 10px;
     padding: 3px 8px;
-    background-color: rgba(255, 255, 255, 0.05);
+    background-color: alpha(@on_surface, 0.05);
     box-shadow: inset 1px 1px 1px rgba(255, 255, 255, 0.08);
 }
 
 /* Keyboard-highlighted event (Up/Down or j/k). */
 .event-row.active {
-    background-color: rgba(255, 255, 255, 0.16);
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.26);
+    background-color: alpha(@on_surface, 0.16);
+    box-shadow: inset 0 0 0 1px alpha(@on_surface, 0.26);
 }
 
 /* The event list's scroll viewport is transparent so the glass shows through. */
@@ -151,9 +147,9 @@ scrolledwindow > viewport {
 /* Add/edit box: a frosted glass pill matching the panel. */
 entry {
     border-radius: 10px;
-    background-color: rgba(255, 255, 255, 0.06);
+    background-color: alpha(@on_surface, 0.06);
     box-shadow: inset 1px 1px 1px rgba(255, 255, 255, 0.10);
-    color: #ffffff;
+    color: @on_surface;
 }
 
 /* Flat buttons (header nav, Today, Week, add/cancel): quiet until hovered. */
@@ -162,7 +158,7 @@ button.flat {
 }
 
 button.flat:hover {
-    background-color: rgba(255, 255, 255, 0.10);
+    background-color: alpha(@on_surface, 0.10);
 }
 
 /* ISO week number down the left of each week row (from upstream). Kept subtle
@@ -174,5 +170,5 @@ button.flat:hover {
 
 /* Thin separating line above each week (like the iOS month view). */
 .week-row {
-    border-top: 1px solid rgba(255, 255, 255, 0.07);
+    border-top: 1px solid alpha(@on_surface, 0.07);
 }
